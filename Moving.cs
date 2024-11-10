@@ -4,6 +4,7 @@ using UnityEngine;
 using System;
 using System.Threading.Tasks;
 using System.Threading;
+using Unity.VisualScripting;
 
 public class Movement : MonoBehaviour
 {
@@ -13,7 +14,12 @@ public class Movement : MonoBehaviour
     Rigidbody rb;
 
     [Header("Movement")]
-    [SerializeField] private float Speed, Running, Peaking, Walking;
+    [SerializeField] private float Speed;
+    [SerializeField] private float maxStamina;
+    [SerializeField] private float recoveryTime;
+    [SerializeField] private float Running;
+    [SerializeField] private float Peaking;
+    [SerializeField] private float Walking;
     [SerializeField] private float maxAcceleration;
     [SerializeField] private float maxAirAcceleration;
     Vector3 velocity, desiredVelocity;
@@ -22,7 +28,7 @@ public class Movement : MonoBehaviour
     [SerializeField] private float surfaceTime;
     [SerializeField] private float DesiredMoveSpeed;
     private float speedChangeFactor;
-    bool isRunning, isPeaking;
+    bool isRunning, isPeaking, isIdle;
 
     [Header("Jump")]
     [SerializeField] private float jumpForce;
@@ -31,6 +37,18 @@ public class Movement : MonoBehaviour
     [SerializeField, Range(0f, 5f)] private int maxAirJumps = 0;
     bool isJump;
     int jumpPhase;
+
+    [Header("Vault")]
+    int vaultLayer;
+    [SerializeField] float playerRadius = 0.5f;
+    [SerializeField] float vaultRadius;
+    [SerializeField] float vaultMaxDist;
+
+    [Header("Climb")]
+    int climbLayer;
+    [SerializeField] float climbSpeed;
+    [SerializeField] float climbRadius;
+    [SerializeField] float climbMaxDist;
 
     [Header("Ground Check")]
     [SerializeField] float playerHeight;
@@ -57,6 +75,10 @@ public class Movement : MonoBehaviour
     private void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        vaultLayer = LayerMask.NameToLayer("Vault");
+        vaultLayer = ~vaultLayer;
+        climbLayer = LayerMask.NameToLayer("Climb");
+        climbLayer = ~climbLayer;
         OnValidate();
     }
 
@@ -84,6 +106,10 @@ public class Movement : MonoBehaviour
             desiredVelocity = new Vector3(playerInput.x, 0, playerInput.y) * Speed;
         }
 
+        Vault();
+
+        Climb();
+
         isJump |= Input.GetButtonDown("Jump");
 
         isPeaking = Input.GetKey(KeyCode.C);
@@ -93,6 +119,7 @@ public class Movement : MonoBehaviour
 
     void FixedUpdate()
     {
+        float stamina = 0f;
         UpdateState();
         AdjustVelocity();
         SurfaceAlignment();
@@ -103,12 +130,22 @@ public class Movement : MonoBehaviour
             Jump();
         }
 
+        if (isIdle)
+        {
+            GetState((int)MovementState.Idle);
+            stamina += Time.deltaTime * recoveryTime;
+        }
         if (isPeaking)
             GetState((int)MovementState.Peaking);
-        else if (isRunning)
+        else if (isRunning && maxStamina != 0)
+        {
             GetState((int)MovementState.Running);
+            stamina -= Time.deltaTime;
+        }
         else
             GetState((int)MovementState.Walking);
+
+
 
         rb.velocity = velocity;
         ClearState();
@@ -165,6 +202,78 @@ public class Movement : MonoBehaviour
             jumpSpeed = Mathf.Max(jumpSpeed - alignSpeed, 0f);
         }
         velocity.y += jumpSpeed;
+    }
+
+    void Climb()
+    {
+        if (Input.GetKey(KeyCode.Space))
+        {
+
+            if (Physics.Raycast(transform.position, transform.right, out var hit, climbMaxDist, climbLayer))
+            {
+                transform.right = hit.normal;
+                rb.position = Vector3.Lerp(rb.position, hit.point + hit.normal * climbRadius, climbSpeed * Time.fixedDeltaTime);
+            }
+            else if (Physics.Raycast(transform.position, -transform.right, out hit, climbMaxDist, climbLayer))
+            {
+                transform.right = -hit.normal;
+                rb.position = Vector3.Lerp(rb.position, hit.point + hit.normal * climbRadius, climbSpeed * Time.fixedDeltaTime);
+            }
+            else if (Physics.Raycast(transform.position, -transform.forward, out hit, climbMaxDist, climbLayer))
+            {
+                transform.forward = -hit.normal;
+                rb.position = Vector3.Lerp(rb.position, hit.point + hit.normal * climbRadius, climbSpeed * Time.fixedDeltaTime);
+            }
+            else if (Physics.Raycast(transform.position, transform.forward, out hit, climbMaxDist, climbLayer))
+            {
+                transform.forward = hit.normal;
+                rb.position = Vector3.Lerp(rb.position, hit.point + hit.normal * climbRadius, climbSpeed * Time.fixedDeltaTime);
+            }
+        }
+    }
+
+    void Vault()
+    {
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            RaycastHit[] hits;
+            hits = Physics.RaycastAll(transform.position, transform.right, vaultMaxDist, vaultLayer);
+            for (int i = 0; i < hits.Length; i++)
+            {
+                RaycastHit hit = hits[i];
+                if (Physics.Raycast(hit.point + (transform.right * vaultRadius) + (Vector3.up * 0.6f * playerHeight),
+                    Vector3.down, out var secondHit, playerHeight))
+                {
+                    StartCoroutine(LerpVault(secondHit.point, 0.5f));
+                }
+            }
+            // if(Physics.Raycast(transform.position, transform.right, out var firstHit, vaultMaxDist, vaultLayer))
+            // {
+            //     Debug.DrawRay(transform.position, transform.right, Color.green);
+            //     if(Physics.Raycast(firstHit.point + (transform.right * vaultRadius) + (Vector3.up * 0.6f * playerHeight),
+            //         Vector3.down, out var secondHit, playerHeight))
+            //         {
+            //             StartCoroutine(LerpVault(secondHit.point, 0.5f));
+            //             Debug.DrawRay(transform.position, transform.right, Color.red);
+            //         }
+            // }
+            // else if (Physics.Raycast(transform.position, -transform.right, out firstHit, vaultMaxDist, vaultLayer))
+            // {
+            //     if (Physics.Raycast(firstHit.point + (-transform.right * vaultRadius) + (Vector3.up * 0.6f * playerHeight),
+            //         Vector3.down, out var secondHit, playerHeight))
+            //     {
+            //         StartCoroutine(LerpVault(secondHit.point, 0.5f));
+            //     }
+            // }
+            // else if (Physics.Raycast(transform.position, transform.forward, out firstHit, vaultMaxDist, vaultLayer))
+            // {
+            //     if (Physics.Raycast(firstHit.point + (transform.forward * vaultRadius) + (Vector3.up * 0.6f * playerHeight),
+            //         Vector3.down, out var secondHit, playerHeight))
+            //     {
+            //         StartCoroutine(LerpVault(secondHit.point, 0.5f));
+            //     }
+            // }
+        }
     }
 
     void UpdateState()
@@ -253,6 +362,20 @@ public class Movement : MonoBehaviour
         keepMomentum = true;
     }
 
+    IEnumerator LerpVault(Vector3 targetPosition, float duration)
+    {
+        float time = 0;
+        Vector3 startPosition = transform.position;
+
+        while (time < duration)
+        {
+            transform.position = Vector3.Lerp(startPosition, targetPosition, time / duration);
+            time += Time.deltaTime;
+            yield return null;
+        }
+        transform.position = targetPosition;
+    }
+
     Vector3 ProjectOnContactPlane(Vector3 vector)
     {
         return vector - contactNormal * Vector3.Dot(vector, contactNormal);
@@ -321,7 +444,7 @@ public class Movement : MonoBehaviour
         (int)MovementState.Walking => (int)(Speed = Walking),
         (int)MovementState.Jumping => (int)(Speed = jumpForce),
         (int)MovementState.Peaking => (int)(Speed = Peaking),
-        _ => (int)(Speed = 0f)
+        (int)MovementState.Idle => (int)(Speed = 0f)
     };
 
     //delegate Vector3 playerVelocity(Vector3 velocity);
@@ -329,6 +452,7 @@ public class Movement : MonoBehaviour
 
 public enum MovementState
 {
+    Idle,
     Walking,
     Running,
     Jumping,
